@@ -6,22 +6,22 @@
 [![EVM](https://img.shields.io/badge/EVM-compatible-3C3C3D?logo=ethereum&logoColor=white)](https://ethereum.org/)
 [![Foundry](https://img.shields.io/badge/Foundry-ready-000000?logo=ethereum&logoColor=white)](https://getfoundry.sh/)
 
-> **A Foundry project that wraps Uniswap V2 Router02 to swap tokens and manage USDT/DAI liquidity — add liquidity in one call and remove it when exiting a position.**
+> **A Foundry project that wraps Uniswap V2 Router02 to swap tokens and open a USDT/DAI LP position from a single-token deposit.**
 
-LiquidityPool is a learning-oriented Solidity smart contract that integrates with an existing **Uniswap V2–compatible router and factory** on the EVM. Users can swap ERC-20 tokens through a single entry point, deposit into the **USDT/DAI** pool via a convenience `addLiquidity` flow (half USDT is swapped to DAI automatically), and remove LP tokens to recover underlying assets.
+LiquidityPool is a learning-oriented Solidity smart contract ([`src/SwapApp.sol`](./src/SwapApp.sol)) that integrates with an existing **Uniswap V2–compatible router and factory** on the EVM. Users can swap ERC-20 tokens through a single entry point, or deposit **USDT only** via `addLiquidity`: part of the input is swapped to DAI internally, then both tokens are added to the pool and LP tokens are minted to the caller.
 
-The contract uses **OpenZeppelin SafeERC20** for token transfers and approvals, emits events for swaps and liquidity additions, and is tested against an **Arbitrum mainnet fork** with real on-chain addresses.
+The contract inherits **OpenZeppelin `ReentrancyGuard`** and **`Ownable`**, uses **SafeERC20** with `forceApprove`, refunds leftover tokens after adding liquidity, and exposes an owner-only `rescueERC20` recovery function.
 
 **Key features:**
 
-- 🔁 `swapTokens()` — wraps `swapExactTokensForTokens` with configurable recipient
-- 💧 `addLiquidity()` — splits USDT input, swaps half to DAI, then adds liquidity to the pair
-- 🚪 `removeLiquidity()` — burns LP tokens and returns USDT/DAI to a chosen address
-- 🧩 Minimal `IV2Router02` and `IFactory` interfaces
-- 🛡️ **SafeERC20** for `transferFrom` and `approve`
-- 📣 Events: `SwapTokens`, `AddLiquidity`
-- 🧪 Foundry test suite with **Arbitrum mainnet fork**
-- 🔗 Configurable router, factory, and token addresses set at deploy time
+- 🔁 [`swapTokens()`](./src/SwapApp.sol) — wraps `swapExactTokensForTokens` with configurable recipient
+- 💧 [`addLiquidity()`](./src/SwapApp.sol) — swaps a configurable USDT portion to DAI, then adds both tokens to the pool
+- 🛡️ **ReentrancyGuard** on state-changing functions
+- 👤 **Ownable** with [`rescueERC20()`](./src/SwapApp.sol) for stuck token recovery
+- 🧩 Minimal [`IV2Router02`](./src/interfaces/IV2Router02.sol) and [`IFactory`](./src/interfaces/IFactory.sol) interfaces
+- 📣 Indexed events: `SwapTokens`, `AddLiquidity`
+- 🧪 Foundry test suite in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol)
+- 🔗 Immutable router, factory, and token addresses set at deploy time
 
 ---
 
@@ -50,10 +50,10 @@ The contract uses **OpenZeppelin SafeERC20** for token transfers and approvals, 
 | 🖥️ **OS** | macOS, Linux, or Windows |
 | 🔧 **Git** | Required for cloning and submodules |
 | ⚒️ **Foundry** | `forge`, `cast`, and `anvil` for build and test |
-| 🌐 **RPC URL** | Arbitrum endpoint for fork tests |
+| 🌐 **RPC URL** | Arbitrum endpoint for fork-based integration tests |
 | 🌐 **Browser** | Modern browser for [Remix IDE](https://remix.ethereum.org/) |
 
-**Quick minimum:** [Foundry](https://getfoundry.sh/) installed and Solidity compiler **0.8.24**.
+**Quick minimum:** [Foundry](https://getfoundry.sh/) installed and Solidity compiler **0.8.35**.
 
 ### Install Foundry
 
@@ -74,7 +74,7 @@ cast --version
 | Dependency | Role |
 | :-- | :-- |
 | [forge-std](https://github.com/foundry-rs/forge-std) | Foundry testing utilities and cheatcodes |
-| [OpenZeppelin Contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) | `IERC20` and `SafeERC20` for safe token transfers |
+| [OpenZeppelin Contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) | [`IERC20`](./lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol), [`SafeERC20`](./lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol), [`ReentrancyGuard`](./lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol), [`Ownable`](./lib/openzeppelin-contracts/contracts/access/Ownable.sol) |
 
 After cloning:
 
@@ -90,11 +90,11 @@ forge install
 
 | Technology | Version | Role |
 | :-- | :-- | :-- |
-| **Solidity** | `0.8.24` | Smart contract language |
+| **Solidity** | `0.8.35` | Smart contract language |
 | **Foundry** | latest (`foundryup`) | Build, test, and CLI interaction |
-| **OpenZeppelin Contracts** | vendored in `lib/` | ERC-20 interfaces and SafeERC20 |
+| **OpenZeppelin Contracts** | vendored in `lib/` | SafeERC20, ReentrancyGuard, Ownable |
 | **Uniswap V2 Router02** | external (on-chain) | DEX router for swaps and liquidity |
-| **Uniswap V2 Factory** | external (on-chain) | Resolves USDT/DAI pair (LP token) address |
+| **Uniswap V2 Factory** | external (on-chain) | Resolves USDT/DAI pair address |
 | **EVM** | — | Execution environment (Ethereum-compatible chains) |
 | **SPDX** | `MIT` | License identifier in source |
 
@@ -119,7 +119,7 @@ LiquidityPool/
 └── .vscode/
 ```
 
-LiquidityPool is a **Foundry-first** project. The Uniswap V2 router and factory are not deployed here — the `SwapApp` contract is configured with existing on-chain addresses for your target network.
+LiquidityPool is a **Foundry-first** project. The Uniswap V2 router and factory are not deployed here — [`SwapApp`](./src/SwapApp.sol) is configured with existing on-chain addresses for your target network.
 
 ---
 
@@ -135,17 +135,17 @@ forge build
 
 ### 2. Deploy
 
-Deploy the `SwapApp` contract with the Router02, Factory, USDT, and DAI addresses for your network.
+Deploy [`SwapApp`](./src/SwapApp.sol) with the Router02, Factory, USDT, and DAI addresses for your network. The deployer becomes the contract owner via [`Ownable`](./lib/openzeppelin-contracts/contracts/access/Ownable.sol).
 
 **Arbitrum mainnet:**
 
 | Field | Value |
 | :-- | :-- |
-| **Contract** | `SwapApp` |
-| **`V2Router02Address_`** | `0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24` |
-| **`UniswapFactoryAddress_`** | `0xf1D7CC64Fb4452F05c498126312eBE29f30Fbcf9` |
-| **`USDT_`** | `0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9` |
-| **`DAI_`** | `0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1` |
+| **Contract** | [`SwapApp`](./src/SwapApp.sol) |
+| **`_router`** | `0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24` |
+| **`_factory`** | `0xf1D7CC64Fb4452F05c498126312eBE29f30Fbcf9` |
+| **`_usdt`** | `0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9` |
+| **`_dai`** | `0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1` |
 
 Using Foundry:
 
@@ -161,7 +161,7 @@ forge create src/SwapApp.sol:SwapApp \
     0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1
 ```
 
-Use the correct router, factory, and token addresses for your chain. The values above match the Arbitrum fork tests in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol).
+Use the correct router, factory, and token addresses for your chain. The values above match the constants in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol).
 
 ### 3. Usage
 
@@ -186,40 +186,34 @@ address[] memory path = new address[](2);
 path[0] = USDT;
 path[1] = DAI;
 
-liquidityPool.addLiquidity(amountIn, amountOutMin, path, amountAMin, amountBMin, deadline);
+liquidityPool.addLiquidity(amountIn, amountSwap, amountOutMin, path, amountAMin, amountBMin, deadline);
 ```
 
-**Remove liquidity:**
+**Owner — recover stuck tokens:**
 
 ```solidity
-IERC20(lpTokenAddress).approve(liquidityPoolAddress, liquidityAmount);
-
-liquidityPool.removeLiquidity(liquidityAmount, amountAMin, amountBMin, msg.sender, deadline);
+liquidityPool.rescueERC20(tokenAddress, amount);
 ```
+
+Before calling `addLiquidity` or `swapTokens` from a frontend, query the router's `getAmountsOut` to compute a safe `amountOutMin` with your desired slippage tolerance.
 
 ---
 
 ## 🧪 Testing the Contract
 
-Fork tests impersonate a known USDT holder on Arbitrum mainnet (`0xB45323118e29e3C33c4a906dD8ce9d9CF443D380`).
+Tests live in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol).
 
-### Local tests (no fork)
+### Local tests
 
 ```bash
 forge test -vv
 ```
 
-Runs `testHasBeenDeployedCorrectly` only. Swap and liquidity integration tests require an Arbitrum fork.
+Runs `testRescueFunction`, which verifies that the contract owner can recover ERC-20 tokens sent to the contract via [`rescueERC20()`](./src/SwapApp.sol).
 
 ### Arbitrum fork tests
 
-```bash
-forge test -vvvv \
-  --fork-url https://arb1.arbitrum.io/rpc \
-  --match-test testSwapTokensCorrectly
-```
-
-Full suite on a fork:
+For swap and add-liquidity integration tests against live pool state, run against an Arbitrum fork:
 
 ```bash
 forge test -vv --fork-url https://arb1.arbitrum.io/rpc
@@ -229,39 +223,30 @@ forge test -vv --fork-url https://arb1.arbitrum.io/rpc
 
 | Step | Action |
 | :-- | :-- |
-| 1 | Deploy `SwapApp` with Arbitrum addresses |
-| 2 | Impersonate the USDT holder from the test file |
+| 1 | Deploy [`SwapApp`](./src/SwapApp.sol) with Arbitrum addresses |
+| 2 | Impersonate a funded USDT holder |
 | 3 | Approve LiquidityPool for `amountIn` USDT |
-| 4 | Call `swapTokens(amountIn, amountOutMin, [USDT, DAI], user, deadline)` |
+| 4 | Call `swapTokens(amountIn, amountOutMin, [USDT, DAI], recipient, deadline)` |
 | 5 | Assert USDT balance decreased and DAI balance increased |
 
 ### Add liquidity (`addLiquidity`)
 
 | Step | Action |
 | :-- | :-- |
-| 1 | Impersonate the USDT holder from the test file |
+| 1 | Impersonate a funded USDT holder |
 | 2 | Approve LiquidityPool for `amountIn_` USDT |
-| 3 | Call `addLiquidity(amountIn_, amountOutMin_, [USDT, DAI], amountAMin_, amountBMin_, deadline_)` |
-| 4 | Contract swaps half USDT to DAI, then calls router `addLiquidity` |
-| 5 | LP tokens are sent to `msg.sender`; `AddLiquidity` event is emitted |
+| 3 | Call `addLiquidity(amountIn_, amountSwap_, amountOutMin_, [USDT, DAI], amountAMin_, amountBMin_, deadline_)` |
+| 4 | Contract swaps `amountSwap_` USDT to DAI, then adds `usdtRemaining` + DAI to the pool |
+| 5 | LP tokens are sent to `msg.sender`; leftover USDT/DAI are refunded |
 
 Edge cases:
 
+- Zero address in constructor → `"Invalid address"`
 - Insufficient USDT allowance → SafeERC20 transfer reverts
 - `amountOutMin_` too high after swap → router slippage revert
 - `amountAMin_` / `amountBMin_` too high → router liquidity revert
 - Expired `deadline_` → router `"EXPIRED"` revert
-
-### Remove liquidity (`removeLiquidity`)
-
-| Step | Action |
-| :-- | :-- |
-| 1 | User holds USDT/DAI LP tokens from a prior `addLiquidity` |
-| 2 | Approve LP token to LiquidityPool for `liquidityAmount_` |
-| 3 | Call `removeLiquidity(liquidityAmount_, amountAMin_, amountBMin_, to_, deadline_)` |
-| 4 | Underlying USDT and DAI are sent to `to_` |
-
-Fork tests depend on live chain state. If the hard-coded holder address no longer has USDT, update `user` in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol).
+- Non-owner calling `rescueERC20` → Ownable revert
 
 ### Manual interaction with `cast`
 
@@ -278,8 +263,9 @@ cast send $LIQUIDITY_POOL \
   --private-key $USER_PK
 
 cast send $LIQUIDITY_POOL \
-  "addLiquidity(uint256,uint256,address[],uint256,uint256,uint256)" \
+  "addLiquidity(uint256,uint256,uint256,address[],uint256,uint256,uint256)" \
   $AMOUNT_IN \
+  $AMOUNT_SWAP \
   $AMOUNT_OUT_MIN \
   "[$USDT,$DAI]" \
   $AMOUNT_A_MIN \
@@ -287,25 +273,20 @@ cast send $LIQUIDITY_POOL \
   $DEADLINE \
   --private-key $USER_PK
 
-cast send $LP_TOKEN "approve(address,uint256)" $LIQUIDITY_POOL $LP_AMOUNT --private-key $USER_PK
-
 cast send $LIQUIDITY_POOL \
-  "removeLiquidity(uint256,uint256,uint256,address,uint256)" \
-  $LP_AMOUNT \
-  $AMOUNT_A_MIN \
-  $AMOUNT_B_MIN \
-  $RECIPIENT \
-  $DEADLINE \
-  --private-key $USER_PK
+  "rescueERC20(address,uint256)" \
+  $TOKEN \
+  $AMOUNT \
+  --private-key $OWNER_PK
 ```
 
 ### Remix
 
 1. Copy [`src/SwapApp.sol`](./src/SwapApp.sol) and the files under [`src/interfaces/`](./src/interfaces/) into Remix.
-2. Add OpenZeppelin imports via Remix GitHub import or flatten the contract.
-3. Compile with Solidity **0.8.24**.
+2. Add OpenZeppelin imports from [openzeppelin-contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) or flatten the contract.
+3. Compile with Solidity **0.8.35**.
 4. Deploy with your network's router, factory, USDT, and DAI addresses.
-5. Approve tokens to the deployed contract, then call `swapTokens`, `addLiquidity`, or `removeLiquidity`.
+5. Approve tokens to the deployed contract, then call `swapTokens` or `addLiquidity`.
 
 ---
 
@@ -316,84 +297,109 @@ LiquidityPool sits between the user and on-chain Uniswap V2 infrastructure:
 ```mermaid
 flowchart TB
     User["👤 User"]
-    LP["💧 LiquidityPool"]
+    LP["💧 LiquidityPool (SwapApp)"]
     R["📡 V2 Router02"]
-    F["🏭 V2 Factory"]
     Pool["💧 USDT/DAI Pool"]
+    Owner["👤 Owner"]
 
     User -->|"approve + swapTokens()"| LP
     User -->|"approve USDT + addLiquidity()"| LP
-    User -->|"approve LP + removeLiquidity()"| LP
     LP -->|"swapExactTokensForTokens"| R
-    LP -->|"addLiquidity / removeLiquidity"| R
-    LP -->|"getPair(USDT, DAI)"| F
+    LP -->|"addLiquidity"| R
     R --> Pool
     R -->|"tokens / LP to user"| User
+    Owner -->|"rescueERC20()"| LP
+```
+
+### Single-token to LP position flow
+
+How [`addLiquidity()`](./src/SwapApp.sol) turns USDT-only input into an LP position:
+
+```
+  User (USDT only)
+        │
+        │  approve + addLiquidity(amountIn, amountSwap, ...)
+        ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │              LiquidityPool (SwapApp)                    │
+  │                                                         │
+  │  [1] Pull amountIn_ USDT from user                      │
+  │           │                                             │
+  │           ├──► [2] swapTokens(amountSwap_)              │
+  │           │         USDT ──► Router ──► DAI (contract)  │
+  │           │                                             │
+  │           └──► [3] usdtRemaining = amountIn_ - amountSwap_
+  │                     │                                   │
+  │                     ▼                                   │
+  │              [4] Router.addLiquidity(                   │
+  │                    USDT = usdtRemaining,                │
+  │                    DAI  = swappedAmount)                │
+  │                     │                                   │
+  │                     ▼                                   │
+  │              [5] LP tokens ──────────────► User         │
+  │              [6] Leftover USDT/DAI ──────► User         │
+  └─────────────────────────────────────────────────────────┘
 ```
 
 ### Contract responsibilities
 
 | Contract / Interface | Responsibility |
 | :-- | :-- |
-| **`SwapApp`** | Token swaps, automated half-swap + liquidity add, liquidity removal |
-| **`IV2Router02`** | Minimal interface for swap and liquidity router functions |
-| **`IFactory`** | Resolves the USDT/DAI pair address for LP token operations |
+| [`SwapApp`](./src/SwapApp.sol) | Token swaps, single-token liquidity add, owner rescue |
+| [`IV2Router02`](./src/interfaces/IV2Router02.sol) | Minimal interface for swap and liquidity router functions |
+| [`IFactory`](./src/interfaces/IFactory.sol) | Factory interface (available for pair lookups) |
 
 ### Core state
 
 | Variable | Visibility | Description |
 | :-- | :-- | :-- |
-| `V2Router02Address` | `public` | Uniswap V2–compatible router address |
-| `UniswapFactoryAddress` | `public` | Uniswap V2 factory address |
-| `USDT` | `public` | USDT token address for the configured pair |
-| `DAI` | `public` | DAI token address for the configured pair |
+| `V2Router02Address` | `public immutable` | Uniswap V2–compatible router address |
+| `UniswapFactoryAddress` | `public immutable` | Uniswap V2 factory address |
+| `USDT` | `public immutable` | USDT token address for the configured pair |
+| `DAI` | `public immutable` | DAI token address for the configured pair |
 
 ### Write functions
 
 | Function | Access | Description |
 | :-- | :-- | :-- |
-| `swapTokens(uint256 amountIn_, uint256 amountOutMin_, address[] path_, address to_, uint256 deadline_)` | `public` | Pulls input token, swaps via router, sends output to `to_` |
-| `addLiquidity(uint256 amountIn_, uint256 amountOutMin_, address[] path_, uint256 amountAMin_, uint256 amountBMin_, uint256 deadline_)` | `external` | Swaps half USDT to DAI, then adds both tokens to the pool |
-| `removeLiquidity(uint256 liquidityAmount_, uint256 amountAMin_, uint256 amountBMin_, address to_, uint256 deadline_)` | `external` | Burns LP tokens and returns USDT/DAI to `to_` |
+| `swapTokens(uint256 amountIn_, uint256 amountOutMin_, address[] path_, address to_, uint256 deadline_)` | `public` `nonReentrant` | Pulls input token, swaps via router, sends output to `to_` |
+| `addLiquidity(uint256 amountIn_, uint256 amountSwap_, uint256 amountOutMin_, address[] path_, uint256 amountAMin_, uint256 amountBMin_, uint256 deadline_)` | `external` `nonReentrant` | Swaps `amountSwap_` USDT to DAI, adds both tokens to the pool, refunds leftovers |
+| `rescueERC20(address token_, uint256 amount_)` | `external` `onlyOwner` | Transfers stuck ERC-20 tokens to the owner |
 
 ### Events
 
 ```solidity
-event SwapTokens(address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut);
-event AddLiquidity(address token0, address token1, uint256 lpTokenAmount);
+event SwapTokens(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
+event AddLiquidity(address indexed token0, address indexed token1, uint256 lpTokenAmount);
 ```
 
 ### Swap flow
 
 1. **Approve** — User grants LiquidityPool allowance on the input ERC-20.
 2. **Transfer in** — Contract pulls tokens from `msg.sender` using SafeERC20.
-3. **Router approve** — Contract approves the router to spend tokens.
+3. **Router approve** — Contract calls `forceApprove` on the router.
 4. **Swap** — Router executes `swapExactTokensForTokens`; output goes to `to_`.
 5. **Event** — `SwapTokens` logs token addresses and amounts.
 
 ### Add liquidity flow
 
-1. **Transfer USDT** — User approves and sends `amountIn_` USDT; contract pulls `amountIn_ / 2`.
-2. **Internal swap** — `swapTokens` converts half USDT to DAI; output stays in the contract.
-3. **Add to pool** — Contract approves router for remaining USDT and swapped DAI, then calls `addLiquidity`.
-4. **LP tokens** — Minted LP tokens are sent to `msg.sender`.
-
-### Remove liquidity flow
-
-1. **Resolve pair** — `IFactory.getPair(USDT, DAI)` returns the LP token address.
-2. **Approve LP** — User approves LiquidityPool to spend LP tokens.
-3. **Remove** — Router `removeLiquidity` burns LP and sends USDT/DAI to `to_`.
+1. **Transfer USDT** — User approves and sends `amountIn_` USDT; contract pulls the full amount.
+2. **Internal swap** — `swapTokens` converts `amountSwap_` USDT to DAI; output stays in the contract.
+3. **Compute remainder** — `usdtRemaining = amountIn_ - amountSwap_`.
+4. **Add to pool** — Contract approves router for `usdtRemaining` and swapped DAI, then calls `addLiquidity`.
+5. **LP tokens** — Minted LP tokens are sent to `msg.sender`.
+6. **Refund** — Any leftover USDT or DAI in the contract is returned to `msg.sender`.
 
 ### Parameters
 
 | Parameter | Used in | Description |
 | :-- | :-- | :-- |
-| `amountIn_` | swap, add | Exact input amount (USDT for add liquidity) |
+| `amountIn_` | swap, add | Total USDT supplied by the user (add liquidity) or exact swap input |
+| `amountSwap_` | add | Portion of `amountIn_` swapped to DAI before adding liquidity |
 | `amountOutMin_` | swap, add | Minimum acceptable swap output (slippage protection) |
 | `path_` | swap, add | Token path, e.g. `[USDT, DAI]` |
-| `to_` | swap, remove | Recipient of output tokens |
-| `amountAMin_` / `amountBMin_` | add, remove | Minimum USDT/DAI amounts (slippage protection) |
-| `liquidityAmount_` | remove | LP tokens to burn |
+| `to_` | swap | Recipient of swap output tokens |
+| `amountAMin_` / `amountBMin_` | add | Minimum USDT/DAI amounts accepted by the router |
 | `deadline_` | all | Unix timestamp after which the transaction reverts |
 
 ---
@@ -402,26 +408,31 @@ event AddLiquidity(address token0, address token1, uint256 lpTokenAmount);
 
 > ⚠️ **This project is intended for learning and demonstration purposes only.** It has **not** undergone a professional security audit.
 
+Review the full implementation in [`src/SwapApp.sol`](./src/SwapApp.sol) before any mainnet use.
+
 ### Known considerations
 
 | Area | Detail |
 | :-- | :-- |
 | 🎓 **Educational scope** | Not production-ready; use at your own risk |
-| 🔗 **External router trust** | All operations depend on the configured Router02, Factory, and underlying pools |
-| 🔒 **Fixed token pair** | `USDT` and `DAI` are set at deploy time; not configurable after construction |
+| 🔗 **External router trust** | All operations depend on the configured Router02 and underlying pools |
+| 🔒 **Fixed token pair** | `USDT` and `DAI` are immutable; set at deploy time in [`SwapApp`](./src/SwapApp.sol) |
 | 💸 **No fee-on-transfer handling** | Assumes standard ERC-20 behavior; deflationary/rebasing tokens may break swaps |
 | ⏱️ **Deadline & slippage** | Caller must set sensible deadlines and minimum amounts; no defaults enforced |
-| 🔓 **Token approvals** | Contract approves the router per operation |
-| 🔄 **Internal swap in addLiquidity** | `addLiquidity` calls the public `swapTokens` |
+| 📉 **Slippage & sandwich attacks** | Strongly recommended: compute `amountOutMin` dynamically from the frontend using the router's `getAmountsOut` before submitting a transaction, to reduce exposure to sandwich attacks |
+| 🛡️ **ReentrancyGuard** | [`ReentrancyGuard`](./lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol) protects `swapTokens` and `addLiquidity`; `addLiquidity` calls the public `swapTokens` internally |
+| 👤 **Ownable admin** | Deployer is owner; [`rescueERC20`](./src/SwapApp.sol) can recover any ERC-20 held by the contract |
+| 🔓 **Token approvals** | Contract uses `forceApprove` on the router per operation |
 | 🌐 **Network-specific** | Router, factory, and token addresses differ per chain |
 | 🧪 **Test first** | Use fork tests or a testnet before mainnet |
 
 ### Before using in production
 
 - [ ] Review all logic in [`src/SwapApp.sol`](./src/SwapApp.sol)
-- [ ] Run fork tests against your target chain, router, and factory
+- [ ] Run fork tests against your target chain and router
+- [ ] Compute `amountOutMin` via `getAmountsOut` with an appropriate slippage buffer
 - [ ] Consider a professional audit
-- [ ] Add pausing, access control, or configurable token pairs if needed
+- [ ] Replace single EOA owner with secure governance if needed
 - [ ] Validate liquidity, paths, and slippage parameters on-chain
 
 ### Reporting vulnerabilities
@@ -436,16 +447,14 @@ Smart contracts carry inherent technical and financial risk. Use this repository
 
 | Command | Description |
 | :-- | :-- |
-| `forge build` | Compile contracts |
-| `forge test -vv` | Run local deployment test |
-| `forge test --fork-url https://arb1.arbitrum.io/rpc` | Run full suite on Arbitrum fork |
-| `forge test -vvvv --fork-url https://arb1.arbitrum.io/rpc --match-test testSwapTokensCorrectly` | Verbose swap fork test |
-| `forge test -vvvv --fork-url https://arb1.arbitrum.io/rpc --match-test testCanAddLiquidityCorrectly` | Verbose add-liquidity fork test |
+| `forge build` | Compile [`SwapApp.sol`](./src/SwapApp.sol) and tests |
+| `forge test -vv` | Run local tests in [`test/SwapApp.t.sol`](./test/SwapApp.t.sol) |
+| `forge test --fork-url https://arb1.arbitrum.io/rpc` | Run tests against an Arbitrum fork |
 | `forge create src/SwapApp.sol:SwapApp --constructor-args <ROUTER> <FACTORY> <USDT> <DAI>` | Deploy via CLI |
 | `anvil` | Start a local Ethereum node |
 | `cast send ... "swapTokens(...)"` | Execute a swap |
-| `cast send ... "addLiquidity(...)"` | Add USDT/DAI liquidity |
-| `cast send ... "removeLiquidity(...)"` | Remove liquidity from the USDT/DAI pair |
+| `cast send ... "addLiquidity(...)"` | Add USDT/DAI liquidity from USDT only |
+| `cast send ... "rescueERC20(...)"` | Owner recovery of stuck tokens |
 
 ---
 
@@ -463,13 +472,14 @@ This project follows **[Semantic Versioning 2.0.0](https://semver.org/)**:
 
 | Version | Status | Notes |
 | :-- | :-- | :-- |
-| **0.1.0** | Current | Initial release: swap, add/remove liquidity, Arbitrum fork tests |
+| **0.2.0** | Current | `ReentrancyGuard`, `Ownable`, `rescueERC20`, configurable `amountSwap_`, token refunds |
+| **0.1.0** | — | Initial release: swap and add liquidity, Arbitrum fork tests |
 
 Tag releases on GitHub:
 
 ```bash
-git tag -a v0.1.0 -m "Initial LiquidityPool release"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "Add ReentrancyGuard, Ownable, and rescueERC20 to SwapApp"
+git push origin v0.2.0
 ```
 
 ---
@@ -497,6 +507,8 @@ SPDX identifier: `MIT`
 
 - [Foundry Book](https://book.getfoundry.sh/)
 - [Uniswap V2 documentation](https://docs.uniswap.org/contracts/v2/overview)
+- [OpenZeppelin ReentrancyGuard](https://docs.openzeppelin.com/contracts/api/utils#ReentrancyGuard)
+- [OpenZeppelin Ownable](https://docs.openzeppelin.com/contracts/api/access#Ownable)
 - [OpenZeppelin SafeERC20](https://docs.openzeppelin.com/contracts/api/token/erc20#SafeERC20)
 - [Solidity documentation](https://docs.soliditylang.org/)
 - [Remix IDE documentation](https://docs.remix-project.org/)
